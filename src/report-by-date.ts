@@ -37,7 +37,8 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { buildEnrichment, renderEnrichHtml, enrichCss } from "./lib/enrich-run";
+import { buildEnrichment, renderEnrichHtml, enrichCss } from "./lib/enrich-run.ts";
+import { EM_KLINE_FIELDS, dailyBar, turnoverWindow, formatTurnover, type TurnoverWindow } from "./lib/report-metrics.ts";
 
 // ---------- 参数 ----------
 const RAW_DATE = (process.env.REPORT_DATE || process.env.DATE || process.argv[2] || "").trim();
@@ -136,7 +137,7 @@ let emKlineDead = 0; // 连续失败计数，超过阈值后不再尝试，避�
 async function emKline(code: string, beg: string, end: string, fqt: 0 | 1): Promise<string[] | null> {
   if (emKlineDead > 20) return null;
   const j = await getJSON(
-    `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secidEM(code)}&klt=101&fqt=${fqt}&fields1=f1,f2,f3&fields2=f51,f52,f53,f56,f57,f59,f61&beg=${beg}&end=${end}`,
+    `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secidEM(code)}&klt=101&fqt=${fqt}&fields1=f1,f2,f3&fields2=${EM_KLINE_FIELDS}&beg=${beg}&end=${end}`,
     "https://quote.eastmoney.com/",
     2
   );
@@ -214,12 +215,14 @@ type DayRow = {
   float: number;
   close: number | null;
   open: number | null;
+  high: number | null;   // 当日不复权最高价
+  low: number | null;    // 当日不复权最低价
   amount: number | null;   // 成交额（元）
   pct: number | null;      // 当日涨跌幅 %
   pctSrc: "qfq" | "em" | "raw" | "";  // 涨跌幅口径来源
   turn: number | null;     // 当日换手率 %
   turnEst: boolean;        // 换手率是否为推算值（成交量÷流通股本）
-  turn5: number[];         // 近5个交易日（含当日）单日换手率
+  turn5: TurnoverWindow;   // 含当日近5条交易日记录，保留缺失值及推算标记
   bars: number;            // 截至当日的K线根数（用于判断是否新股）
   err: string;
 };
@@ -232,8 +235,8 @@ const fnum = (v: any): number | null => {
 async function screenOne(s: Stock): Promise<DayRow> {
   const base: DayRow = {
     code: s.code, name: s.name, total: s.total, float: s.float,
-    close: null, open: null, amount: null, pct: null, pctSrc: "", turn: null, turnEst: false,
-    turn5: [], bars: 0, err: "",
+    close: null, open: null, high: null, low: null, amount: null, pct: null, pctSrc: "", turn: null, turnEst: false,
+    turn5: { values: [], estimated: false }, bars: 0, err: "",
   };
 
   // 主源：腾讯不复权日K（当日开收/成交额/换手率，口径与行情软件一致）
@@ -241,23 +244,18 @@ async function screenOne(s: Stock): Promise<DayRow> {
   if (raw && raw.length) {
     const upto = raw.filter((r) => String(r[0]) <= DATE);
     base.bars = upto.length;
-    base.turn5 = upto.slice(-5).map((r) => {
-      const t = fnum(r[7]);
-      if (t !== null) return t;
-      const v = fnum(r[5]);
-      return v !== null && s.float ? +((v * 100 / s.float) * 100).toFixed(4) : NaN;
-    }).filter((v) => isFinite(v));
+    base.turn5 = turnoverWindow(upto, "tx", DATE, s.float);
     const i = upto.findIndex((r) => String(r[0]) === DATE);
     if (i < 0) {
       base.err = "当日无K线（停牌、尚未上市或已退市）";
       return base;
     }
     const r = upto[i];
-    base.open = fnum(r[1]);
-    base.close = fnum(r[2]);
-    const amtWan = fnum(r[8]);
-    base.amount = amtWan !== null ? amtWan * 1e4 : null; // 万元 → 元
-    base.turn = fnum(r[7]);
+    const bar = dailyBar(r, "tx");
+    base.open = bar.open; base.close = bar.close;
+    base.high = bar.high; base.low = bar.low;
+    base.amount = bar.amount;
+    base.turn = bar.turn;
     if (base.turn === null) {
       const v = fnum(r[5]);
       if (v !== null && s.float) { base.turn = +((v * 100 / s.float) * 100).toFixed(2); base.turnEst = true; }
@@ -278,7 +276,7 @@ async function screenOne(s: Stock): Promise<DayRow> {
       const em = await emKline(s.code, BEG_SCREEN, END, 0);
       if (em) {
         const hit = em.map((x) => x.split(",")).find((p) => p[0] === DATE);
-        const v = hit ? fnum(hit[5]) : null;
+        const v = hit ? dailyBar(hit, "em").pct : null;
         if (v !== null) { base.pct = v; base.pctSrc = "em"; }
       }
     }
@@ -291,15 +289,16 @@ async function screenOne(s: Stock): Promise<DayRow> {
   if (em) {
     const upto = em.map((x) => x.split(",")).filter((p) => p[0] <= DATE);
     base.bars = upto.length;
-    base.turn5 = upto.slice(-5).map((p) => parseFloat(p[6])).filter((v) => isFinite(v));
+    base.turn5 = turnoverWindow(upto, "em", DATE, s.float);
     const hit = upto.find((p) => p[0] === DATE);
     if (!hit) { base.err = "当日无K线（停牌、尚未上市或已退市）"; return base; }
-    base.open = fnum(hit[1]);
-    base.close = fnum(hit[2]);
-    base.amount = fnum(hit[4]);
-    base.pct = fnum(hit[5]);
+    const bar = dailyBar(hit, "em");
+    base.open = bar.open; base.close = bar.close;
+    base.high = bar.high; base.low = bar.low;
+    base.amount = bar.amount;
+    base.pct = bar.pct;
     base.pctSrc = base.pct !== null ? "em" : "";
-    base.turn = fnum(hit[6]);
+    base.turn = bar.turn;
     if (base.pct === null) base.err = "东财K线缺少涨跌幅字段";
     return base;
   }
@@ -426,12 +425,6 @@ function sparkline(kline: [string, number][], color: string): string {
   return `<svg width="${W}" height="${H + 18}" viewBox="0 0 ${W} ${H + 18}"><rect x="0" y="0" width="${W}" height="${H}" fill="#fafafa" stroke="#e5e5e5"/><path d="${path}" fill="none" stroke="${color}" stroke-width="1.5"/><text x="2" y="${H + 13}" class="axlbl">${d0}</text><text x="${W - 2}" y="${H + 13}" text-anchor="end" class="axlbl">${d1}</text><text x="${W - 4}" y="12" text-anchor="end" class="axlbl">高 ${max.toFixed(2)} / 低 ${min.toFixed(2)}</text></svg>`;
 }
 
-function turnover5(r: DayRow): string {
-  if (!r.turn5.length) return "—（无换手数据）";
-  const sum = r.turn5.reduce((a, b) => a + b, 0);
-  const note = r.turn5.length < 5 ? `（上市不足5日，仅${r.turn5.length}日）` : "";
-  return sum.toFixed(2) + "%" + (r.turnEst ? "*" : "") + note;
-}
 
 function holdersHtml(r: DayRow): string {
   const e = extra[r.code];
@@ -457,9 +450,11 @@ function card(r: DayRow, idx: number, dir: "up" | "down"): string {
   <div class="cbody">
     <table class="kv">
       <tr><td>收盘价</td><td>${px(r.close)} 元</td><td>开盘价</td><td>${px(r.open)} 元</td></tr>
+      <tr><td>当日最高价</td><td>${px(r.high)} 元</td><td>当日最低价</td><td>${px(r.low)} 元</td></tr>
       <tr><td>成交额</td><td>${r.amount === null ? "—（数据源缺失）" : yi(r.amount)}</td><td>当日换手率</td><td>${pct(r.turn)}${r.turnEst ? "*" : ""}</td></tr>
-      <tr><td>五日换手率</td><td>${turnover5(r)}</td><td>流通市值<sup>推算</sup></td><td>${yi(floatCap)}</td></tr>
-      <tr><td>流通股/总股本</td><td>${ratio}</td><td>总市值<sup>推算</sup></td><td>${yi(totalCap)}</td></tr>
+      <tr><td>5日换手率</td><td>${formatTurnover(r.turn5)}</td><td>5日平均换手率</td><td>${formatTurnover(r.turn5, true)}</td></tr>
+      <tr><td>流通市值<sup>推算</sup></td><td>${yi(floatCap)}</td><td>总市值<sup>推算</sup></td><td>${yi(totalCap)}</td></tr>
+      <tr><td>流通股/总股本</td><td colspan="3">${ratio}</td></tr>
     </table>
     <div class="chart">${e?.kline?.length ? sparkline(e.kline, color) : `<div class="nochart">未能获取K线：${e?.kerr || "无数据"}</div>`}<div class="chartlbl">截至 ${DATE} 近半年收盘价走势（前复权）</div></div>
     <div class="hbox"><div class="httl">前十大流通股东</div>${holdersHtml(r)}</div>
@@ -513,8 +508,9 @@ ${enrichCss()}
 <h1>A股 涨幅前100 与 跌幅前100 明细报告（指定交易日）</h1>
 <div class="meta">
 <b>交易日：</b>${DATE}（周${weekday}）｜<b>范围：</b>沪深两市A股（沪主板、深主板含原中小板、创业板、科创板），<b>不含北交所</b>；参与排序的当日有效样本 ${valid.length} 只（全市场名单 ${universe.length} 只，其余为当日停牌、尚未上市或接口失败 ${failed.length} 只）。${noPctNote}<br>
-<b>生成方式：</b>本报告为<b>历史日期回算版</b>——不使用行情榜单快照，而是对全市场逐只拉取日K线，取 ${DATE} 当日涨跌幅重新排序后取前/后各100名。行情数据主源为腾讯财经公开接口（收盘/开盘/成交额/换手率取自不复权日K原始字段；涨跌幅由前复权连续收盘价环比计算，与行情软件官方口径一致，除权除息日亦准确）；东方财富公开接口用于全市场名单、前十大流通股东及个别兜底${estNote}。生成时间 ${generatedAt}（北京时间）。<br>
-<b>口径与局限：</b>①当日收盘价、开盘价、成交额、换手率均取自<b>不复权</b>日K线，与行情软件当日排行口径一致；走势图为<b>前复权</b>收盘价。②<b>流通市值/总市值为推算值</b>＝当日收盘价 × <b>当前</b>流通股本/总股本，若此后发生过增发、回购、解禁等股本变动会有偏差。③样本取自当前仍在市的股票名单，<b>在 ${DATE} 之后已退市的个股不在样本内</b>。④前十大流通股东取报告期<b>不晚于 ${DATE}</b> 的最新一期披露，不使用未来数据。⑤无法取得的数据以"—"标示并注明原因，<b>不编造、不臆测</b>。<br>
+<b>生成方式：</b>本报告为<b>历史日期回算版</b>——不使用行情榜单快照，而是对全市场逐只拉取日K线，取 ${DATE} 当日涨跌幅重新排序后取前/后各100名。行情数据主源为腾讯财经公开接口（收盘/开盘/最高/最低/成交额/换手率取自不复权日K原始字段；涨跌幅由前复权连续收盘价环比计算，与行情软件官方口径一致，除权除息日亦准确）；东方财富公开接口用于全市场名单、前十大流通股东及个别兜底${estNote}。生成时间 ${generatedAt}（北京时间）。<br>
+<b>口径与局限：</b>①当日收盘价、开盘价、最高价、最低价、成交额、换手率均取自<b>不复权</b>日K线，与行情软件当日排行口径一致；走势图为<b>前复权</b>收盘价。②<b>流通市值/总市值为推算值</b>＝当日收盘价 × <b>当前</b>流通股本/总股本，若此后发生过增发、回购、解禁等股本变动会有偏差。③样本取自当前仍在市的股票名单，<b>在 ${DATE} 之后已退市的个股不在样本内</b>。④前十大流通股东取报告期<b>不晚于 ${DATE}</b> 的最新一期披露，不使用未来数据。⑤无法取得的数据以"—"标示并注明原因，<b>不编造、不臆测</b>。<br>
+<b>换手率口径：</b>5日换手率为含报告日在内最近5条交易日记录的换手率之和，5日平均换手率为其算术平均；不足5日按实际记录数计算并注明，缺失数据不补零，涉及当前流通股本推算以 * 标注。<br>
 <b>三期增强口径：</b>${enrichRes.metaNote}
 </div>
 ${section("一、涨幅前 100", up, "up")}

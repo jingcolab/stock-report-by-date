@@ -25,13 +25,15 @@ import {
   boardKlineBreakerOpen,
   fetchLhbList,
   fetchLhbSeats,
+  fetchLhbInstitutions,
   minuteSVG,
   klineWindowSVG,
   type BoardMember,
   type LhbEntry,
   type LhbSeat,
   type MinuteData,
-} from "./enrich";
+} from "./enrich.ts";
+import type { InstitutionTotals } from "./report-metrics.ts";
 
 // ---------- 类型 ----------
 
@@ -64,6 +66,8 @@ interface CardEnrich {
   conceptErr: string;         // 概念获取失败原因（空=正常）
   expanded: ExpandedBoard[];  // 展开的前2个
   lhb: { entries: LhbEntry[]; buy: LhbSeat[]; sell: LhbSeat[] } | null;
+  institutions: InstitutionTotals[];
+  institutionErr: string;
   lhbErr: string;             // 龙虎榜明细获取失败原因（空=正常或未上榜）
 }
 
@@ -128,6 +132,15 @@ export async function buildEnrichment(opts: BuildOpts): Promise<EnrichResult> {
   } catch (e) {
     lhbListErr = `龙虎榜数据获取失败（${String(e).slice(0, 80)}）`;
     console.warn(lhbListErr);
+  }
+
+  let institutionMap = new Map<string, InstitutionTotals[]>();
+  let institutionErr = "";
+  try {
+    institutionMap = await fetchLhbInstitutions(date);
+  } catch (e) {
+    institutionErr = `机构买卖统计获取失败（${String(e).slice(0, 80)}）`;
+    console.warn(institutionErr);
   }
 
   // 1) 四大指数走势图（全局缓存）
@@ -227,6 +240,7 @@ export async function buildEnrichment(opts: BuildOpts): Promise<EnrichResult> {
       idxChartSvg: "", idxChartLbl: "",
       conceptChips: [], conceptErr: conceptTableErr, expanded: [],
       lhb: null, lhbErr: "",
+      institutions: institutionMap.get(s.code) ?? [], institutionErr,
     };
     const sym = symTX(s.code);
     const mi = marketIndexOf(s.code);
@@ -326,7 +340,7 @@ export async function buildEnrichment(opts: BuildOpts): Promise<EnrichResult> {
   }
   if (conceptTableErr || conceptFail > 0) notes.push(`本次有 ${conceptFail || "部分"} 只个股概念板块获取失败，已在卡片内注明`);
   if (lhbListErr) notes.push(`<b>龙虎榜数据本次获取失败</b>：${lhbListErr}`);
-  else notes.push(`龙虎榜为交易所披露、经东财数据中心整理的当日榜单，两市入选个股中共 ${lhbCount} 只上榜；席位明细为买入/卖出前5营业部`);
+  else notes.push(`龙虎榜为交易所披露、经东财数据中心整理的当日榜单，两市入选个股中共 ${lhbCount} 只上榜；席位明细为买入/卖出前5营业部。机构净买入＝max(机构买入总额－卖出总额, 0)，净卖出反向计算；机构统计按各上榜原因分别展示，单日与多日累计不混加`);
 
   return {
     map,
@@ -366,8 +380,19 @@ function expandedHtml(e: ExpandedBoard): string {
   </div>`;
 }
 
+export function institutionHtml(entries: InstitutionTotals[], error = ""): string {
+  if (error) return `<div class="noholder">机构净买入／净卖出：—（${esc(error)}）</div>`;
+  if (!entries.length) return `<div class="dim">机构净买入／净卖出：—（未披露机构买卖记录）</div>`;
+  const amt = (n: number | null) => n === null ? "—" : (n / 10000).toFixed(2) + " 万元";
+  return `<div class="instbox"><div class="bkmemttl">机构买卖统计（各榜单分别计算，不跨榜相加）</div>${entries.map(e => `
+    <div class="institem"><div class="lhbreason">统计范围：${esc(e.explanation || "按数据源披露口径")}</div>
+    <table class="seatt"><tr><th>机构买入总额</th><th>机构卖出总额</th><th>机构净买入</th><th>机构净卖出</th></tr>
+    <tr><td>${amt(e.buy)}</td><td>${amt(e.sell)}</td><td style="color:#c0392b">${amt(e.netBuy)}</td><td style="color:#1e8449">${amt(e.netSell)}</td></tr></table></div>`).join("")}</div>`;
+}
+
 function lhbHtml(ce: CardEnrich): string {
   if (!ce.lhb) {
+    if (ce.institutions.length) return `<div class="lhbbox"><div class="httl">龙虎榜机构统计</div>${institutionHtml(ce.institutions, ce.institutionErr)}${ce.lhbErr ? `<div class="noholder">${esc(ce.lhbErr)}</div>` : ""}</div>`;
     return ce.lhbErr
       ? `<div class="lhbbox"><div class="httl">龙虎榜</div><div class="noholder">未能获取：${esc(ce.lhbErr)}</div></div>`
       : `<div class="lhbbox"><div class="httl">龙虎榜</div><div class="dim">当日未登上龙虎榜</div></div>`;
@@ -387,6 +412,7 @@ function lhbHtml(ce: CardEnrich): string {
     <div class="httl">龙虎榜 <span class="lhbtag">当日上榜</span></div>
     <div class="lhbreason">上榜原因：${reasons.map(esc).join("；") || "—"}</div>
     <div>${summary}</div>
+    ${institutionHtml(ce.institutions, ce.institutionErr)}
     ${ce.lhbErr ? `<div class="noholder">席位明细：${esc(ce.lhbErr)}</div>` : `<div class="seats">${seatTable("买入金额前5席位", ce.lhb.buy)}${seatTable("卖出金额前5席位", ce.lhb.sell)}</div>`}
   </div>`;
 }
@@ -433,6 +459,8 @@ table.bkt td{padding:2px 8px 2px 0;border-bottom:1px dashed #f0f0f0}
 table.bkt td:last-child{text-align:right;font-weight:600;white-space:nowrap}
 .mcode{color:#999;font-family:Consolas,monospace;font-size:11px;margin-left:5px}
 .lhbbox{margin-top:8px}
+.instbox{margin:8px 0;padding:8px;background:#f7f8fa;border:1px solid #e5e5e5;border-radius:4px}
+.institem{margin-top:6px;break-inside:avoid}
 .lhbtag{background:#c0392b;color:#fff;border-radius:4px;padding:1px 7px;font-size:11.5px;font-weight:normal;margin-left:6px}
 .lhbreason{font-size:12.5px;color:#555;margin:3px 0}
 .seats{display:flex;flex-wrap:wrap;gap:24px;margin-top:5px}

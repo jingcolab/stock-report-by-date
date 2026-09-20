@@ -15,6 +15,8 @@
  *    数据源，带熔断，失败即诚实降级，绝不能让报告依赖它
  */
 
+import { finiteNumber, institutionTotals, type InstitutionTotals } from "./report-metrics.ts";
+
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -285,6 +287,39 @@ async function dcGet(reportName: string, filter: string, pageSize: number, pageN
   return getJSON(url);
 }
 
+/** 机构汇总独立取数，避免把买卖两榜中重复的匿名“机构专用”席位相加。
+ * 同股不同上榜原因保留分项（可能分别为单日/三日累计），不跨榜求和。
+ * 来源：https://data.eastmoney.com/stock/jgmmtj.html，BUY_AMT/SELL_AMT 单位元。
+ */
+export async function fetchLhbInstitutions(date: string): Promise<Map<string, InstitutionTotals[]>> {
+  const out = new Map<string, InstitutionTotals[]>();
+  const seen = new Set<string>();
+  let pages = 1;
+  for (let pn = 1; pn <= pages; pn++) {
+    const j = await dcGet("RPT_ORGANIZATION_TRADE_DETAILSNEW", `(TRADE_DATE='${date}')`, 200, pn);
+    if (!j?.result?.data && j?.message === "返回数据为空") {
+      if (pn === 1) return out;
+      throw new Error("机构统计分页数据缺失");
+    }
+    if (j?.success === false || !Array.isArray(j?.result?.data)) throw new Error("机构统计接口返回异常");
+    pages = Number(j.result.pages) || 1;
+    if (pages > 20) throw new Error("机构统计分页异常");
+    for (const row of j.result.data) {
+      if (String(row.TRADE_DATE).slice(0, 10) !== date) throw new Error("机构统计日期不匹配");
+      const code = String(row.SECURITY_CODE ?? "");
+      if (!/^\d{6}$/.test(code)) throw new Error("机构统计股票代码缺失");
+      const entry = institutionTotals(row);
+      const key = JSON.stringify([code, entry]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const entries = out.get(code) ?? [];
+      entries.push(entry);
+      out.set(code, entries);
+    }
+  }
+  return out;
+}
+
 /** 当日龙虎榜全表。返回 Map<code, LhbEntry[]>（一只股票可因多个原因多次上榜） */
 export async function fetchLhbList(date: string): Promise<Map<string, LhbEntry[]>> {
   const out = new Map<string, LhbEntry[]>();
@@ -354,8 +389,7 @@ export async function fetchLhbSeats(
 }
 
 function numOrNull(v: any): number | null {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
+  return finiteNumber(v);
 }
 
 // ---------------------------------------------------------------------------

@@ -28,6 +28,11 @@ on:
       - 'tests/test_apps_script_storage.py'
       - 'scripts/pdf_drive.py'
       - 'tests/test_pdf_fonts.py'
+      - 'src/report-by-date.ts'
+      - 'src/lib/**'
+      - 'tests/report-metrics.test.ts'
+      - 'tests/report-render.test.ts'
+      - 'tests/fixtures/**'
   pull_request:
     paths:
       - 'apps-script/**'
@@ -41,6 +46,11 @@ on:
       - 'tests/test_apps_script_storage.py'
       - 'scripts/pdf_drive.py'
       - 'tests/test_pdf_fonts.py'
+      - 'src/report-by-date.ts'
+      - 'src/lib/**'
+      - 'tests/report-metrics.test.ts'
+      - 'tests/report-render.test.ts'
+      - 'tests/fixtures/**'
 
 permissions:
   contents: write
@@ -72,6 +82,11 @@ jobs:
         run: python -m pytest tests -q
         env:
           REQUIRE_PDF_FONT_TEST: '1'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: 验证价格、换手率、机构资金与完整报表
+        run: node --test tests/report-metrics.test.ts tests/report-render.test.ts
       - name: 验证每日行情云盘目录与上传协议
         run: node --test tests/test_apps_script_gateway.cjs
 
