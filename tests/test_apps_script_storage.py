@@ -6,6 +6,7 @@ import pytest
 
 from src.apps_script_storage import (
     DEFAULT_MAX_BYTES,
+    MAX_POST_ATTEMPTS,
     AppsScriptConfig,
     AppsScriptDriveClient,
     AppsScriptError,
@@ -164,3 +165,44 @@ def test_does_not_retry_non_transient_apps_script_error(tmp_path, monkeypatch):
         )
 
     assert len(session.calls) == 1
+
+
+def test_retries_upload_404_after_successful_ping(tmp_path, monkeypatch):
+    path = tmp_path / "2026-09-18.pdf"
+    path.write_bytes(b"%PDF-1.4\nreport")
+    session = FakeSession([
+        FakeResponse({"ok": True, "result": {"base_path": "CNINFO/每日行情"}}),
+        FakeResponse(None, status_code=404, text="Google response unavailable"),
+        FakeResponse({"ok": True, "result": {"status": "skipped", "file_id": "saved"}}),
+    ])
+    monkeypatch.setattr("src.apps_script_storage.time.sleep", lambda _: None)
+    client = AppsScriptDriveClient(config=config(), session=session)
+    client.ping()
+    result = client.upload_run_file(path, "20260918-stock-report")
+    assert result["status"] == "skipped"
+    assert len(session.calls) == 3
+    # Retrying the exact same bytes and hash is idempotent on the gateway.
+    assert session.calls[1][1]["json"] == session.calls[2][1]["json"]
+
+
+def test_invalid_deployment_404_is_not_retried(monkeypatch):
+    session = FakeSession([FakeResponse(None, status_code=404, text="Not found")])
+    monkeypatch.setattr("src.apps_script_storage.time.sleep", lambda _: None)
+    with pytest.raises(AppsScriptError, match="404"):
+        AppsScriptDriveClient(config=config(), session=session).ping()
+    assert len(session.calls) == 1
+
+
+def test_persistent_upload_404_remains_a_failure(tmp_path, monkeypatch):
+    path = tmp_path / "2026-09-18.pdf"
+    path.write_bytes(b"%PDF-1.4\nreport")
+    session = FakeSession([
+        FakeResponse({"ok": True, "result": {}}),
+        *[FakeResponse(None, status_code=404, text="Not found") for _ in range(MAX_POST_ATTEMPTS)],
+    ])
+    monkeypatch.setattr("src.apps_script_storage.time.sleep", lambda _: None)
+    client = AppsScriptDriveClient(config=config(), session=session)
+    client.ping()
+    with pytest.raises(AppsScriptError, match="404"):
+        client.upload_run_file(path, "20260918-stock-report")
+    assert len(session.calls) == 1 + MAX_POST_ATTEMPTS

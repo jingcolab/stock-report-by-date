@@ -41,6 +41,8 @@ CNINFO/每日行情/runs/YYYY/YYYY-MM/YYYYMMDD-stock-report/YYYY-MM-DD.pdf
 
 HTML 会提交到本仓库 `reports/YYYY-MM-DD.html`。PDF 上传到现有 Drive 服务的归档路径，具体位置见任务日志。
 
+HTML 发布在独立的临时 Git 工作区中进行：基于远端最新分支提交该报告，保留其他文件的更新；重复执行或并发更新不会在 PDF 源文件中留下合并冲突。已通过连接检查的上传请求遇到 HTTP 404 时，会用相同内容和 SHA256 有限重试；持续失败仍会标红，不会误报上传成功。
+
 如果暂时没有配置 Drive，可取消 `upload_drive` 并勾选 `upload_artifact`，运行成功后从任务底部 Artifacts 下载 PDF，附件保留 7 天。两项都不勾选时仅 HTML 持久保存，runner 上的 PDF 随任务环境释放。
 
 ## 每日自动运行

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import mimetypes
 import os
 import re
@@ -115,6 +116,7 @@ class AppsScriptDriveClient:
     ) -> None:
         self.config = config or AppsScriptConfig.from_env()
         self.session = session or requests.Session()
+        self._endpoint_verified = False
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         body = {"token": self.config.token, **payload}
@@ -135,9 +137,20 @@ class AppsScriptDriveClient:
                 raise AppsScriptError("无法连接 Apps Script Web App") from exc
 
             if (
-                response.status_code in TRANSIENT_STATUS
+                (
+                    response.status_code in TRANSIENT_STATUS
+                    or (
+                        response.status_code == 404
+                        and self._endpoint_verified
+                        and payload.get("operation") in {"run_file", "upsert", "dataset_file"}
+                    )
+                )
                 and attempt < MAX_POST_ATTEMPTS
             ):
+                logging.getLogger(__name__).warning(
+                    "Apps Script HTTP %s，重试同一请求（%s/%s）",
+                    response.status_code, attempt, MAX_POST_ATTEMPTS,
+                )
                 time.sleep(_retry_delay(response, attempt))
                 continue
             if response.status_code >= 400:
@@ -168,6 +181,8 @@ class AppsScriptDriveClient:
             result = data.get("result")
             if not isinstance(result, dict):
                 raise AppsScriptError("Apps Script 成功响应缺少 result")
+            if payload.get("operation") == "ping":
+                self._endpoint_verified = True
             return result
         raise AppsScriptError(f"Apps Script 重试耗尽：{last_error}")
 
