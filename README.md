@@ -55,6 +55,8 @@ HTML 发布在独立的临时 Git 工作区中进行：基于远端最新分支�
 
 需要 Bun、Python 3.11+；PDF 需要 Chrome / Chromium。
 
+Linux 还需安装 `fontconfig` 和 `fonts-noto-cjk`，执行 `fc-cache -f`。手动与每日工作流会自动安装中文字体；字体缺失时会在生成前报错，避免把中文变成方框。自动检查会用 Chrome 实际生成中文和 SVG 样本 PDF，并验证中文字体已嵌入。
+
 ```bash
 python -m pip install -r requirements.txt
 bun run src/report-by-date.ts 2026-09-18

@@ -479,7 +479,7 @@ const html = `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <title>A股涨跌幅榜 TOP100 · ${DATE}</title>
 <style>
-body{font-family:"Microsoft YaHei","PingFang SC",sans-serif;margin:0;background:#f0f2f5;color:#222}
+body{font-family:"Noto Sans CJK SC","Noto Sans SC","Microsoft YaHei","PingFang SC",sans-serif;margin:0;background:#f0f2f5;color:#222}
 .wrap{max-width:1000px;margin:0 auto;padding:20px}
 h1{font-size:22px;margin:8px 0}
 h2{font-size:18px;border-left:4px solid currentColor;padding-left:8px;margin:26px 0 12px}

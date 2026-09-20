@@ -26,6 +26,8 @@ on:
       - 'src/apps_script_storage.py'
       - 'tests/test_publish_report.py'
       - 'tests/test_apps_script_storage.py'
+      - 'scripts/pdf_drive.py'
+      - 'tests/test_pdf_fonts.py'
   pull_request:
     paths:
       - 'apps-script/**'
@@ -37,6 +39,8 @@ on:
       - 'src/apps_script_storage.py'
       - 'tests/test_publish_report.py'
       - 'tests/test_apps_script_storage.py'
+      - 'scripts/pdf_drive.py'
+      - 'tests/test_pdf_fonts.py'
 
 permissions:
   contents: write
@@ -59,8 +63,15 @@ jobs:
           python-version: '3.11'
       - name: 安装测试依赖
         run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: 安装 PDF 中文字体与检查工具
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fontconfig fonts-noto-cjk poppler-utils
+          fc-cache -f
       - name: 验证日期、报告发布和上传重试
         run: python -m pytest tests -q
+        env:
+          REQUIRE_PDF_FONT_TEST: '1'
       - name: 验证每日行情云盘目录与上传协议
         run: node --test tests/test_apps_script_gateway.cjs
 
@@ -89,6 +100,13 @@ jobs:
 
       - name: 安装 Drive 上传依赖
         run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: 安装 PDF 中文字体
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fontconfig fonts-noto-cjk
+          fc-cache -f
+          python -c 'from scripts.pdf_drive import _require_chinese_font; _require_chinese_font()'
 
       - name: 确定北京时间报告日期
         id: report-date

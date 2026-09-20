@@ -63,11 +63,30 @@ def _run(command: list[str], label: str) -> None:
         raise RuntimeError(f"{label}失败（退出码 {result.returncode}）：{detail}")
 
 
+def _require_chinese_font() -> None:
+    """Linux Chrome otherwise silently renders Chinese as empty boxes."""
+    if not sys.platform.startswith("linux"):
+        return
+    fontconfig = shutil.which("fc-list")
+    if not fontconfig:
+        raise RuntimeError("缺少 fontconfig，无法检查 PDF 中文字体；请先安装 fontconfig 和 fonts-noto-cjk")
+    result = subprocess.run(
+        [fontconfig, ":lang=zh-cn", "family"],
+        text=True, capture_output=True, check=False,
+    )
+    if result.returncode or not result.stdout.strip():
+        raise RuntimeError(
+            "未找到简体中文字体，已停止生成 PDF，避免输出方框；"
+            "请先安装 fonts-noto-cjk 并运行 fc-cache -f"
+        )
+
+
 def render_html_pdf(html_path: Path, pdf_path: Path) -> Path:
     html_path = html_path.resolve()
     pdf_path = pdf_path.resolve()
     if not html_path.is_file():
         raise FileNotFoundError(f"HTML 报告不存在：{html_path}")
+    _require_chinese_font()
     browser = _find_executable(
         "CHROME_BIN",
         ("google-chrome-stable", "google-chrome", "chromium", "chromium-browser"),
@@ -81,6 +100,7 @@ def render_html_pdf(html_path: Path, pdf_path: Path) -> Path:
             "--no-sandbox",
             "--disable-gpu",
             "--disable-dev-shm-usage",
+            "--lang=zh-CN",
             "--allow-file-access-from-files",
             "--run-all-compositor-stages-before-draw",
             "--virtual-time-budget=10000",
