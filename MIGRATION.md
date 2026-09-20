@@ -65,7 +65,7 @@ Actions → A股指定日期报告（手动）→ Run workflow：
 
 确认任务真正运行完成：生成 HTML → 提交 HTML → 生成 PDF 并上传 Drive。
 
-HTML 保存在新仓库的 `reports/YYYY-MM-DD.html`。PDF 沿用原网关目录规则：`BASE_PATH/_runs/YYYY/YYYY-MM/YYYYMMDD-stock-report/YYYY-MM-DD.pdf`；实际路径以任务日志为准。
+HTML 保存在新仓库的 `reports/YYYY-MM-DD.html`。PDF 的根目录由 Apps Script 的 `BASE_PATH` 决定；原服务的实际路径以任务日志为准。要单独改存到 `CNINFO/每日行情/runs/YYYY/YYYY-MM/YYYYMMDD-stock-report/YYYY-MM-DD.pdf`，按[专用上传服务部署步骤](apps-script/README.md)操作，不要修改原共享服务的目录。
 
 没有 Drive 配置时，可取消 `upload_drive`，并在新账号有 Artifact 额度时勾选 `upload_artifact`，从任务底部 Artifacts 下载 PDF。两者均不勾选时，PDF 只留在临时 runner 上，结束后不可下载；HTML 仍提交到仓库。
 

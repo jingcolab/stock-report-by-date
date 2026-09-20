@@ -22,6 +22,16 @@
 
 可选变量 `GDRIVE_APPS_SCRIPT_MAX_BYTES` 默认为 `36700160`（35 MiB）。GitHub 自带的 `GITHUB_TOKEN` 自动提供，不用手动配置。
 
+## 改存到 CNINFO/每日行情
+
+本仓库已提供 [每日行情专用 Apps Script](apps-script/Code.gs) 和[部署步骤](apps-script/README.md)。在同一个 Google 账号中新建独立项目并部署，再更新本仓库的 URL、TOKEN 两项 Secrets，后续手动和自动报告将保存到：
+
+```text
+CNINFO/每日行情/runs/YYYY/YYYY-MM/YYYYMMDD-stock-report/YYYY-MM-DD.pdf
+```
+
+不要直接修改原共享上传服务的 `BASE_PATH`，否则会影响原机构调研任务。新脚本仍需在 Google 部署后才会生效；已有文件不会自动移动。
+
 ## 手动生成报告
 
 1. 打开上面的手动工作流，点击 Run workflow。
@@ -60,6 +70,6 @@ python -m pytest tests -q
 
 提取自 `zencolab/stock` 的 `ef37b849330d393d098b83f92b7c2f401e9c9609` 提交，仅部署指定日期报告。未包含其他业务的工作流或采集脚本；共享 Drive 客户端保留兼容接口。
 
-迁移包已通过 17 项本地回归测试、TypeScript/Python 语法及工作流 shell 语法检查。目标账号下的完整行情采集、PDF 和 Drive 归档需要首次实际运行验证。
+迁移包已通过 17 项本地回归测试、TypeScript/Python 语法及工作流 shell 语法检查。新账号下的完整行情采集、PDF 和原 Drive 服务归档已通过 [2026-09-18 报告运行](https://github.com/jingcolab/stock-report-by-date/actions/runs/35493546049) 验证；每日行情专用服务需部署后再验证上传。
 
 报告保持原数据口径：当前沪深股票名单、历史价格数据、部分股本类指标使用当前股本推算；历史退市股票不在当前名单内。详细迁移说明见 [MIGRATION.md](MIGRATION.md)。

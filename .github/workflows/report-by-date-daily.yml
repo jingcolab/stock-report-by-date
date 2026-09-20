@@ -17,11 +17,15 @@ on:
         default: false
   push:
     paths:
+      - 'apps-script/**'
+      - 'tests/test_apps_script_gateway.cjs'
       - '.github/workflows/report-by-date*.yml'
       - 'scripts/report_date.py'
       - 'tests/test_report_date.py'
   pull_request:
     paths:
+      - 'apps-script/**'
+      - 'tests/test_apps_script_gateway.cjs'
       - '.github/workflows/report-by-date*.yml'
       - 'scripts/report_date.py'
       - 'tests/test_report_date.py'
@@ -47,6 +51,8 @@ jobs:
           python-version: '3.11'
       - name: 验证定时报告日期回归用例
         run: python -m unittest discover -s tests -p test_report_date.py -v
+      - name: 验证每日行情云盘目录与上传协议
+        run: node --test tests/test_apps_script_gateway.cjs
 
   report:
     needs: validate
